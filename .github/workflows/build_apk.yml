@@ -15,7 +15,6 @@ env:
   # Imzalama anahtari tanimliysa otomatik kullanilir (Settings -> Secrets).
   KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
-  # Tum adimlarin kullandigi tek kaynak (isim tekrarini onler).
   MANIFEST: android/app/src/main/AndroidManifest.xml
 
 jobs:
@@ -48,11 +47,12 @@ jobs:
       # ---------------------------------------------------------------------
       # 1) Eksik Android iskeletini CI uzerinde uret.
       #
-      #    --project-name, pubspec.yaml'daki `name:` ile AYNI olmali; aksi
-      #    halde flutter create "name does not match" hatasi verir.
+      #    --project-name, pubspec.yaml'daki `name:` ile AYNI olmali.
       #
-      #    Uretilenler: gradlew, gradle-wrapper.jar, local.properties,
-      #    mipmap ikonlari, (varsa eksik) manifest ve activity.
+      #    NOT: Flutter 3.35 Kotlin DSL uretir (build.gradle.kts). Asagida
+      #    bunlar silinip yerine Groovy dosyalari yazilir. Bu yuzden bu adim
+      #    yalnizca gradlew / wrapper JAR / local.properties / ikon uretmek
+      #    icin gerekli.
       # ---------------------------------------------------------------------
       - name: Generate Android scaffold
         run: |
@@ -62,49 +62,223 @@ jobs:
             --platforms=android
 
       # ---------------------------------------------------------------------
-      # 2) Elle yazdigimiz kaynaklari geri yukle.
-      #
-      #    `git checkout -- .` YALNIZCA izlenen (tracked) dosyalari dondurur.
-      #    Manifest izlenmiyorsa veya commit'te yoksa Flutter'in sablonu
-      #    kalir -> izinler kaybolur. Bu yuzden 3. adimda izinler bagimsiz
-      #    olarak garantilenir.
+      # 2) Git'ten gelen dosyalari geri yukle (varsa faydali, yoksa zararsiz).
       # ---------------------------------------------------------------------
       - name: Restore hand-written sources
         run: |
-          set -e
-
           git checkout -- . || true
-
-          # Flutter 3.35 `flutter create` Kotlin DSL uretir; Groovy
-          # dosyalarimizla cakisir.
-          find android -name "*.kts" -delete
-
-          # flutter create'in urettigi fazladan activity paketleri.
-          # (Bizim paketimiz: com.eokul.fotograf -- SILINMEMELI.)
-          rm -rf android/app/src/main/kotlin/com/eokul/eokul_fotograf
-          rm -rf android/app/src/main/java/com/eokul/eokul_fotograf
-          rm -rf android/app/src/main/kotlin/com/eokul/eokul_foto_app
-          rm -rf android/app/src/main/java/com/eokul/eokul_foto_app
-
           rm -f test/widget_test.dart
           rm -f lib/main.dart.bak pubspec.yaml.bak
-
           echo "Geri yukleme tamamlandi."
 
       # ---------------------------------------------------------------------
-      # 3) IZIN ENJEKSIYONU  <-- asil duzeltme
+      # 3) GRADLE DOSYALARI  <-- kritik
       #
-      #    AndroidManifest.xml icinde eksik olan CAMERA / depolama izinleri
-      #    ve kamera donanim ozellikleri dogrudan yazilir.
+      #    `flutter create` Kotlin DSL uretir; bizim uygulama Groovy kullanir.
+      #    Repoda android/app/build.gradle commit'li olmadigi icin KTS
+      #    dosyalarini silmek geriye HICBIR build dosyasi birakmiyordu
+      #    ("No such file or directory" hatasinin nedeni).
       #
-      #    Idempotent: izin zaten varsa TEKRAR EKLENMEZ.
-      #    Git durumundan bagimsizdir: manifest ezilmis olsa da calisir.
+      #    Bu adim dort dosyayi kosulsuz olarak yazar: deterministik ve
+      #    git durumundan bagimsiz.
+      # ---------------------------------------------------------------------
+      - name: Ensure Android Gradle files
+        run: |
+          set -eu
+
+          # Kotlin DSL dosyalarini kaldir (Groovy ile cakisir).
+          find android -name "*.kts" -delete
+
+          mkdir -p android/app
+
+          # ------------------------- android/gradle.properties -------------
+          cat > android/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx4096M -XX:MaxMetaspaceSize=2048M -XX:+HeapDumpOnOutOfMemoryError
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          # ------------------------- android/settings.gradle ---------------
+          cat > android/settings.gradle <<'EOF'
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }()
+
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "8.9.1" apply false
+              id "org.jetbrains.kotlin.android" version "2.1.0" apply false
+          }
+
+          include ":app"
+          EOF
+
+          # ------------------------- android/build.gradle -------------------
+          cat > android/build.gradle <<'EOF'
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.buildDir = "../build"
+
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+
+          subprojects {
+              project.evaluationDependsOn(":app")
+          }
+
+          // AGP 8 "Namespace not specified" korumasi: camera_android gibi
+          // eski eklentiler namespace tanimlamaz; manifest'teki `package`
+          // degerinden turetiyoruz.
+          subprojects { subproject ->
+              afterEvaluate {
+                  try {
+                      if (!subproject.hasProperty("android")) return
+                      def androidExt = subproject.android
+                      if (androidExt.namespace != null) return
+
+                      def manifest = subproject.file("src/main/AndroidManifest.xml")
+                      if (!manifest.exists()) return
+
+                      def matcher = manifest.text =~ /package="([^"]+)"/
+                      if (matcher.find()) {
+                          androidExt.namespace = matcher.group(1)
+                          println "namespace atandi: ${subproject.name} -> ${matcher.group(1)}"
+                      }
+                  } catch (Exception e) {
+                      // Sessizce gec.
+                  }
+              }
+          }
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+
+          # ------------------------- android/app/build.gradle ---------------
+          cat > android/app/build.gradle <<'EOF'
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          def localProperties = new Properties()
+          def localPropertiesFile = rootProject.file("local.properties")
+          if (localPropertiesFile.exists()) {
+              localPropertiesFile.withReader("UTF-8") { reader ->
+                  localProperties.load(reader)
+              }
+          }
+
+          def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
+          if (flutterVersionCode == null) {
+              flutterVersionCode = "1"
+          }
+
+          def flutterVersionName = localProperties.getProperty("flutter.versionName")
+          if (flutterVersionName == null) {
+              flutterVersionName = "1.0"
+          }
+
+          android {
+              namespace = "com.eokul.fotograf"
+              compileSdk = 35
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              sourceSets {
+                  main.java.srcDirs += "src/main/kotlin"
+              }
+
+              defaultConfig {
+                  applicationId = "com.eokul.fotograf"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = flutterVersionCode.toInteger()
+                  versionName = flutterVersionName
+                  multiDexEnabled = true
+              }
+
+              signingConfigs {
+                  def keystorePropertiesFile = rootProject.file("key.properties")
+                  if (keystorePropertiesFile.exists()) {
+                      def keystoreProperties = new Properties()
+                      keystorePropertiesFile.withReader("UTF-8") { reader ->
+                          keystoreProperties.load(reader)
+                      }
+                      release {
+                          keyAlias = keystoreProperties["keyAlias"]
+                          keyPassword = keystoreProperties["keyPassword"]
+                          storeFile = file(keystoreProperties["storeFile"])
+                          storePassword = keystoreProperties["storePassword"]
+                      }
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.findByName("release") != null
+                              ? signingConfigs.release
+                              : signingConfigs.debug
+                      minifyEnabled = false
+                      shrinkResources = false
+                  }
+              }
+
+              packagingOptions {
+                  resources {
+                      excludes += ["META-INF/*.kotlin_module"]
+                  }
+              }
+          }
+
+          flutter {
+              source = "../.."
+          }
+          EOF
+
+          echo "Gradle dosyalari yazildi:"
+          ls -la android/*.gradle android/app/*.gradle android/gradle.properties
+
+      # ---------------------------------------------------------------------
+      # 4) IZIN ENJEKSIYONU
+      #
+      #    Manifest icinde eksik olan CAMERA / depolama izinleri ve kamera
+      #    donanim ozellikleri dogrudan yazilir. Idempotent.
       # ---------------------------------------------------------------------
       - name: Ensure Android permissions in manifest
         run: |
-          # NOT: `set -e` BILEREK kullanilmiyor. Asagidaki `grep -q` cagrilari
-          # "bulunamadi" (exit 1) durumunda normal akis parcasidir; set -e
-          # acik olsaydi script sessizce olurdu.
+          # NOT: `set -e` BILEREK yok: asagidaki `grep -q` cagrilarinin
+          # "bulunamadi" (exit 1) sonucu normal akistir.
           set -u
 
           if [ ! -f "$MANIFEST" ]; then
@@ -151,12 +325,11 @@ jobs:
               exit 1
             fi
           else
-            echo "Izinler zaten mevcut; degisiklik yapilmadi."
+            echo "Izinler zaten mevcut."
           fi
           rm -f "$BLOCK"
 
-          # Uygulama gorunen adini duzelt (Flutter sablonu proje adini yazar).
-          # UTF-8 etiket icin python kullaniliyor; sed yerel ayara takilabilir.
+          # Uygulama etiketi (UTF-8 icin python; sed yerel ayara takilabilir).
           python3 - "$MANIFEST" <<'PY'
           import pathlib, re, sys
           p = pathlib.Path(sys.argv[1])
@@ -171,58 +344,44 @@ jobs:
           grep -nE 'uses-permission|uses-feature' "$MANIFEST" || true
 
       # ---------------------------------------------------------------------
-      # 4) MainActivity emniyet kemeri.
-      #
-      #    Git geri yukleme basarisiz olup Flutter'in urettigi activity
-      #    silindiyse derleme "class MainActivity not found" ile patlar.
+      # 5) MainActivity emniyet kemeri.
       # ---------------------------------------------------------------------
       - name: Ensure MainActivity
         run: |
-          set -e
-
+          set -eu
           ACTIVITY=android/app/src/main/kotlin/com/eokul/fotograf/MainActivity.kt
-
           if [ ! -f "$ACTIVITY" ]; then
             echo "::warning::$ACTIVITY bulunamadi, yeniden olusturuluyor."
             mkdir -p "$(dirname "$ACTIVITY")"
             printf 'package com.eokul.fotograf\n\nimport io.flutter.embedding.android.FlutterActivity\n\nclass MainActivity : FlutterActivity()\n' > "$ACTIVITY"
           fi
-
           echo "MainActivity hazir: $ACTIVITY"
 
       # ---------------------------------------------------------------------
-      # 5) Emniyet kemeri: kritik dosyalar gercekten yerinde mi?
+      # 6) Dogrulama
       # ---------------------------------------------------------------------
       - name: Verify hand-written sources
         run: |
           set -e
-
           fail() { echo "::error::$1"; exit 1; }
 
-          [ -f android/gradlew ] \
-            || fail "android/gradlew uretilmedi."
-          [ -f android/gradle/wrapper/gradle-wrapper.jar ] \
-            || fail "gradle-wrapper.jar uretilmedi."
-          [ -f android/local.properties ] \
-            || fail "android/local.properties uretilmedi."
+          [ -f android/gradlew ] || fail "android/gradlew uretilmedi."
+          [ -f android/gradle/wrapper/gradle-wrapper.jar ] || fail "gradle-wrapper.jar uretilmedi."
+          [ -f android/local.properties ] || fail "android/local.properties uretilmedi."
 
-          grep -q 'android.permission.CAMERA' "$MANIFEST" \
-            || fail "AndroidManifest.xml: CAMERA izni yok."
-          grep -q 'android.permission.READ_EXTERNAL_STORAGE' "$MANIFEST" \
-            || fail "AndroidManifest.xml: READ_EXTERNAL_STORAGE izni yok."
-          grep -q 'android.permission.WRITE_EXTERNAL_STORAGE' "$MANIFEST" \
-            || fail "AndroidManifest.xml: WRITE_EXTERNAL_STORAGE izni yok."
-          grep -q 'android.permission.READ_MEDIA_IMAGES' "$MANIFEST" \
-            || fail "AndroidManifest.xml: READ_MEDIA_IMAGES izni yok."
+          [ -f android/settings.gradle ] || fail "android/settings.gradle yok."
+          [ -f android/build.gradle ] || fail "android/build.gradle yok."
+          [ -f android/app/build.gradle ] || fail "android/app/build.gradle yok."
 
-          grep -q 'com.eokul.fotograf' android/app/build.gradle \
-            || fail "android/app/build.gradle ezilmis: namespace kaybolmus."
-          grep -q 'name: eokul_fotograf' pubspec.yaml \
-            || fail "pubspec.yaml ezilmis: paket adi degismis."
-          [ -f lib/screens/camera_screen.dart ] \
-            || fail "lib/ ezilmis: camera_screen.dart kaybolmus."
-          [ -f android/app/src/main/kotlin/com/eokul/fotograf/MainActivity.kt ] \
-            || fail "MainActivity.kt eksik."
+          grep -q 'android.permission.CAMERA' "$MANIFEST" || fail "Manifest: CAMERA izni yok."
+          grep -q 'android.permission.READ_EXTERNAL_STORAGE' "$MANIFEST" || fail "Manifest: READ_EXTERNAL_STORAGE yok."
+          grep -q 'android.permission.WRITE_EXTERNAL_STORAGE' "$MANIFEST" || fail "Manifest: WRITE_EXTERNAL_STORAGE yok."
+          grep -q 'android.permission.READ_MEDIA_IMAGES' "$MANIFEST" || fail "Manifest: READ_MEDIA_IMAGES yok."
+
+          grep -q 'com.eokul.fotograf' android/app/build.gradle || fail "app/build.gradle: namespace kaybolmus."
+          grep -q 'name: eokul_fotograf' pubspec.yaml || fail "pubspec.yaml ezilmis."
+          [ -f lib/screens/camera_screen.dart ] || fail "lib/ ezilmis."
+          [ -f android/app/src/main/kotlin/com/eokul/fotograf/MainActivity.kt ] || fail "MainActivity.kt eksik."
 
           echo "Tum kritik dosyalar dogrulandi."
 
@@ -230,7 +389,6 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        # Uyarilar build'i durdurmasin; derleme hatalari sonraki adimda cikar.
         run: flutter analyze || true
 
       - name: Run tests
