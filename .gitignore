@@ -1,0 +1,34 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+.metadata
+# NOT: pubspec.lock uygulama projelerinde commit edilir (tekrarlanabilir
+# derleme icin) — bu yuzden burada ignore edilmiyor.
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+*.jks
+*.keystore
+*.apk
+*.aab
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
