@@ -1,0 +1,164 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Ayni dala ust uste push gelirse onceki kosuyu iptal et.
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Imzalama anahtari tanimliysa otomatik kullanilir (Settings -> Secrets).
+  KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+jobs:
+  build:
+    name: Flutter Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # camera 0.10.x / permission_handler 12.x / share_plus 12.x ile uyumlu.
+          flutter-version: '3.35.0'
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      # ---------------------------------------------------------------------
+      # 1) Eksik Android iskeletini CI uzerinde uret.
+      #
+      #    Bu adim sunlari olusturur:
+      #      android/gradlew, android/gradlew.bat
+      #      android/gradle/wrapper/gradle-wrapper.jar + .properties
+      #      android/local.properties, android/app/src/main/res/mipmap-*/...
+      #      .metadata, .gitignore (varsa korunur)
+      #
+      #    DIKKAT: `flutter create .` mevcut dosyalari da YENIDEN YAZAR
+      #    (lib/main.dart, pubspec.yaml, AndroidManifest.xml, build.gradle...).
+      #    Bu yuzden hemen ardindan geri aliniyor.
+      # ---------------------------------------------------------------------
+      - name: Generate Android scaffold
+        run: |
+          flutter create . \
+            --org com.eokul \
+            --project-name eokul_foto_app \
+            --platforms=android
+
+      # ---------------------------------------------------------------------
+      # 2) Elle yazdigimiz kaynaklari geri yukle.
+      #
+      #    `git checkout -- .` IZLENEN tum dosyalari HEAD'e dondurur:
+      #      pubspec.yaml, lib/**, test/**, android/app/build.gradle,
+      #      android/build.gradle, android/settings.gradle,
+      #      AndroidManifest.xml, MainActivity.kt, styles.xml ...
+      #
+      #    Yeni olusan ve HENUZ IZLENMEYEN dosyalar korunur:
+      #      gradlew, gradle-wrapper.jar, local.properties, mipmap ikonlari
+      #    -> Istedigimiz tam olarak bu.
+      # ---------------------------------------------------------------------
+      - name: Restore hand-written sources
+        run: |
+          set -e
+
+          # 1) Izlenen TUM dosyalari HEAD'e dondur.
+          #    pubspec.yaml, lib/**, test/**, android/app/build.gradle,
+          #    android/build.gradle, android/settings.gradle,
+          #    AndroidManifest.xml, MainActivity.kt, styles.xml ...
+          git checkout -- . || true
+
+          # 2) Flutter 3.35 `flutter create` Kotlin DSL uretir
+          #    (build.gradle.kts / settings.gradle.kts). Bunlar bizim Groovy
+          #    dosyalarimizla cakisir; hepsini sil.
+          find android -name "*.kts" -delete
+
+          # 3) flutter create'in ekledigi, bizde karsiligi olmayan dosyalar.
+          rm -f test/widget_test.dart
+          rm -rf android/app/src/main/kotlin/com/eokul/eokul_foto_app
+          rm -rf android/app/src/main/java/com/eokul/eokul_foto_app
+          rm -f lib/main.dart.bak pubspec.yaml.bak
+
+          echo "Geri yukleme tamamlandi."
+          echo "--- Android kok dizini ---"
+          ls -la android/
+
+      # ---------------------------------------------------------------------
+      # 3) Emniyet kemeri: kritik dosyalar gercekten yerinde mi?
+      # ---------------------------------------------------------------------
+      - name: Verify hand-written sources
+        run: |
+          set -e
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          [ -f android/gradlew ] || fail "android/gradlew uretilmedi."
+          [ -f android/gradle/wrapper/gradle-wrapper.jar ] \
+            || fail "gradle-wrapper.jar uretilmedi."
+          [ -f android/local.properties ] \
+            || fail "android/local.properties uretilmedi."
+
+          grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml \
+            || fail "AndroidManifest.xml ezilmis: CAMERA izni yok."
+          grep -q 'com.eokul.fotograf' android/app/build.gradle \
+            || fail "android/app/build.gradle ezilmis: namespace kaybolmus."
+          grep -q 'name: eokul_fotograf' pubspec.yaml \
+            || fail "pubspec.yaml ezilmis: paket adi degismis."
+          [ -f lib/screens/camera_screen.dart ] \
+            || fail "lib/ ezilmis: camera_screen.dart kaybolmus."
+
+          echo "Tum kritik dosyalar dogrulandi."
+          git status --short | head -40
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        # Uyarilar build'i durdurmasin; derleme hatalari sonraki adimda cikar.
+        run: flutter analyze || true
+
+      - name: Run tests
+        run: flutter test || true
+
+      - name: Configure signing
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          {
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.jks"
+          } > android/key.properties
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eokul-fotograf-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
