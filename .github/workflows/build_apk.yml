@@ -143,32 +143,37 @@ jobs:
               project.buildDir = "${rootProject.buildDir}/${project.name}"
           }
 
-          subprojects {
-              project.evaluationDependsOn(":app")
-          }
-
-          // AGP 8 "Namespace not specified" korumasi: camera_android gibi
-          // eski eklentiler namespace tanimlamaz; manifest'teki `package`
-          // degerinden turetiyoruz.
+          // AGP 8 "Namespace not specified" korumasi.
+          //
+          // ONEMLI: `afterEvaluate` KULLANILMAZ. Asagidaki
+          // evaluationDependsOn(":app") alt projeleri hemen degerlendirir;
+          // sonrasinda afterEvaluate cagirmak
+          //   "Cannot run Project.afterEvaluate(Closure) when the project is
+          //    already evaluated."
+          // hatasina yol acar. `plugins.withId` degerlendirme sirasindan
+          // bagimsizdir.
           subprojects { subproject ->
-              afterEvaluate {
+              subproject.plugins.withId("com.android.library") {
                   try {
-                      if (!subproject.hasProperty("android")) return
-                      def androidExt = subproject.android
-                      if (androidExt.namespace != null) return
-
-                      def manifest = subproject.file("src/main/AndroidManifest.xml")
-                      if (!manifest.exists()) return
-
-                      def matcher = manifest.text =~ /package="([^"]+)"/
-                      if (matcher.find()) {
-                          androidExt.namespace = matcher.group(1)
-                          println "namespace atandi: ${subproject.name} -> ${matcher.group(1)}"
+                      def androidExt = subproject.extensions.findByName("android")
+                      if (androidExt != null && androidExt.namespace == null) {
+                          def manifest = subproject.file("src/main/AndroidManifest.xml")
+                          if (manifest.exists()) {
+                              def matcher = manifest.text =~ /package="([^"]+)"/
+                              if (matcher.find()) {
+                                  androidExt.namespace = matcher.group(1)
+                                  println "namespace atandi: ${subproject.name} -> ${matcher.group(1)}"
+                              }
+                          }
                       }
-                  } catch (Exception e) {
+                  } catch (Exception ignored) {
                       // Sessizce gec.
                   }
               }
+          }
+
+          subprojects {
+              project.evaluationDependsOn(":app")
           }
 
           tasks.register("clean", Delete) {
