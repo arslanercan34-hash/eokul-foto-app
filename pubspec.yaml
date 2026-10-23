@@ -1,0 +1,84 @@
+name: eokul_fotograf
+description: "Okul ortaminda ogrenci vesikalik fotograflarini cekip e-Okul standartlarinda arsivleyen uygulama."
+publish_to: 'none'
+version: 1.0.0+1
+
+# -----------------------------------------------------------------------------
+# SDK KISITI — pub.dev paket API'sinden dogrulandi
+#
+# Tabani en dusuk ortak payda belirler:
+#   permission_handler 12.0.1 -> sdk ^3.5.0,       flutter >=3.24.0
+#   share_plus         12.0.2 -> sdk >=3.4.0,      flutter >=3.22.0
+#   camera           0.10.5+9 -> sdk >=3.0.0,      flutter >=3.10.0
+#
+# Kesisim: sdk 3.5.0 / flutter 3.24.0
+# -----------------------------------------------------------------------------
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+  flutter: '>=3.24.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ---------------------------------------------------------------------------
+  # KAMERA — en kararli / en genis uyumlu hat
+  #
+  # 0.10.5+9 -> sdk >=3.0.0 <4.0.0, flutter >=3.10.0
+  #             Android'de `camera_android ^0.10.7` eklentisini kullanir.
+  #
+  # `^0.10.5+9` araligi = >=0.10.5+9 <0.11.0
+  #   0.10.6 -> sdk ^3.2.3, flutter >=3.16.6  (araliga dahil, uyumlu)
+  #
+  # 0.11.x / 0.12.x'e CIKMAYIN: CameraX'e gecer ve Android SDK 24+
+  # (0.12.1 icin Flutter 3.44+) ister.
+  # ---------------------------------------------------------------------------
+  camera: ^0.10.5+9
+
+  # Izin yonetimi: kamera + "kalici reddedildi" tespiti.
+  permission_handler: ^12.0.1
+
+  # Uygulama dizinleri (scoped storage uyumlu).
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  # Kirpma / yeniden boyutlandirma / JPEG sikistirma (saf Dart).
+  image: ^4.5.4
+
+  # Sinif bazli ZIP arsivi olusturma (ZipEncoder, ArchiveFile).
+  archive: ^4.0.7
+
+  # Android paylasim menusu (WhatsApp / Drive / e-posta).
+  # 12.x -> sdk >=3.4.0, flutter >=3.22.0
+  # API : SharePlus.instance.share(ShareParams(...))
+  share_plus: ^12.0.2
+
+  # XFile tipi (kamera + paylasim ortak bagimliligi).
+  cross_file: ^0.3.4+2
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+# -----------------------------------------------------------------------------
+# SURUM MATRISI — pub.dev paket API'sinden dogrulandi
+#
+#   camera             0.10.5+9 -> sdk >=3.0.0, flutter >=3.10.0
+#   camera             0.10.6   -> sdk ^3.2.3,  flutter >=3.16.6
+#   permission_handler 12.0.1   -> sdk ^3.5.0,  flutter >=3.24.0
+#   share_plus         12.0.2   -> sdk >=3.4.0, flutter >=3.22.0
+#   path_provider      2.1.5    -> sdk ^3.4.0,  flutter >=3.22.0
+#   image              4.5.4    -> archive ^4.0.2
+#   archive            4.x      -> sdk >=3.0.0
+#
+# Kesisim (uygulamanin tabani): sdk 3.5.0 / flutter 3.24.0
+#
+# Android arac zinciri (android/ altinda):
+#   Gradle 8.12 / AGP 8.9.1 / Kotlin 2.1.0 / JDK 17
+# -----------------------------------------------------------------------------
+
+flutter:
+  uses-material-design: true
