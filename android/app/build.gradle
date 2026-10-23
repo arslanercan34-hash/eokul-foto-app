@@ -1,0 +1,98 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
+if (flutterVersionCode == null) {
+    flutterVersionCode = "1"
+}
+
+def flutterVersionName = localProperties.getProperty("flutter.versionName")
+if (flutterVersionName == null) {
+    flutterVersionName = "1.0"
+}
+
+android {
+    namespace = "com.eokul.fotograf"
+    // Flutter SDK'nin onerdigi deger: eklentilerin istedigi compileSdk
+    // surumuyle otomatik uyum saglar (Flutter 3.38 -> 36).
+    compileSdk = flutter.compileSdkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+    }
+
+    defaultConfig {
+        applicationId = "com.eokul.fotograf"
+        // camera 0.12.x Android SDK 24+ ister.
+        minSdk = 24
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
+        multiDexEnabled = true
+    }
+
+    signingConfigs {
+        // Release imzalama: android/key.properties varsa kullanilir,
+        // yoksa debug anahtari ile imzalanir (test/dagitim disi kurulum).
+        // Detaylar icin README.md > "Imzali Release APK".
+        def keystorePropertiesFile = rootProject.file("key.properties")
+        if (keystorePropertiesFile.exists()) {
+            def keystoreProperties = new Properties()
+            keystorePropertiesFile.withReader("UTF-8") { reader ->
+                keystoreProperties.load(reader)
+            }
+            release {
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+                storeFile = file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // key.properties yoksa release yapilandirmasi olusmaz; debug
+            // anahtariyla imzalanir (APK cihazda calisir).
+            signingConfig = signingConfigs.findByName("release") != null
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+
+            // R8 kapali: camera/image eklentilerinde reflection kullanimi
+            // olmadigindan gereksiz; APK boyutu icin --split-per-abi kullanin.
+            minifyEnabled = false
+            shrinkResources = false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ["META-INF/*.kotlin_module"]
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}

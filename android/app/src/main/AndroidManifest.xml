@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ==================== IZINLER ==================== -->
+
+    <!-- Kamera: vesikalik cekimi icin zorunlu. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!--
+      Android 12 ve alti (API <= 32) icin depolama izinleri.
+      Uygulama kendi ozel dizininde calistigi icin Android 11+ uzerinde
+      bu izinler CALISMA ANINDA istenmez; yine de eski cihazlarda
+      galeri/dosya erisimi gerektiren OEM davranislari icin tanimli tutulur.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- Android 13+ (API >= 33) medya okuma izni. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- Kamera donanimi. Zorunlu: uygulamanin ana islevi kamera. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
+
+    <!--
+      NOT: FileProvider tanimi burada YAPILMAZ.
+      share_plus eklentisi kendi FileProvider'ini (ShareFileProvider) manifest
+      birlestirme (manifest merger) sirasinda ekler. Ikinci bir provider
+      tanimlamak "authorities cakismasi" hatasina yol acar.
+    -->
+
+    <application
+        android:label="e-Okul Vesikalık"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Flutter temasini uygulama acilirken uygular. -->
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Flutter 2+ gomulu motoru (v2 embedding). -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <!-- Android 11+ paket gorunurlugu: metin paylasimi icin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="application/zip" />
+        </intent>
+    </queries>
+</manifest>

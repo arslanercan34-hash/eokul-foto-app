@@ -1,0 +1,54 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+// -----------------------------------------------------------------------------
+// AGP 8 "Namespace not specified" korumasi
+//
+// camera 0.10.x hattinin kullandigi camera_android eklentisi, bazi
+// surumlerinde build.gradle icinde `namespace` tanimlamaz. AGP 8 bunu
+// HATA olarak verir: "Namespace not specified".
+//
+// Burada manifest'teki eski usul `package="..."` degerini namespace olarak
+// geriye donuk uyguluyoruz. Namespace zaten tanimliysa dokunulmaz.
+//
+// Tum blok try/catch icinde: bu duzeltme basarisiz olsa bile build'in
+// geri kalanini etkilemesin.
+// -----------------------------------------------------------------------------
+subprojects { subproject ->
+    afterEvaluate {
+        try {
+            if (!subproject.hasProperty("android")) return
+            def androidExt = subproject.android
+            if (androidExt.namespace != null) return
+
+            def manifest = subproject.file("src/main/AndroidManifest.xml")
+            if (!manifest.exists()) return
+
+            def matcher = manifest.text =~ /package="([^"]+)"/
+            if (matcher.find()) {
+                androidExt.namespace = matcher.group(1)
+                println "namespace atandi: ${subproject.name} -> ${matcher.group(1)}"
+            }
+        } catch (Exception e) {
+            // Sessizce gec: namespace zaten cozulmus olabilir.
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
